@@ -1,0 +1,542 @@
+===== Assets/_DokkaebiStoneBridge/Scripts/RotatingFloor.cs =====
+using System.Collections;
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 플레이어가 지금 서 있는 바닥을 클릭하면 45도 회전한다 (모뉴먼트 밸리 스타일).
+    // E키를 누른 채 클릭하면 Z축 기준으로 '뒤집기'를 한다 (바닥이 뒤집히고, 플레이어도 같이 뒤집힌다).
+    // standSurface.PlayerIsStanding이 true일 때만(=플레이어가 이 바닥 위에 있을 때만) 조작 가능.
+    // 애니메이션 도중에는 StandSurface.BeginForcedCarry()로 플레이어를 강제로 붙잡아서,
+    // 회전/뒤집기 자체 때문에 떨어지는 일이 없게 한다 (플레이어는 오직 블록 밖으로 걸어나갔을 때만 떨어진다).
+    public class RotatingFloor : MonoBehaviour
+    {
+        [Tooltip("이 바닥 위에 플레이어가 있는지 알려주는 트리거 컴포넌트")]
+        public StandSurface standSurface;
+
+        public float rotateStepDegrees = 45f;
+        public float rotateDuration = 0.25f;
+
+        [Tooltip("E+클릭으로 뒤집을 때 Z축 기준 회전 각도 (180 = 완전히 뒤집힘)")]
+        public float flipDegrees = 180f;
+        public float flipDuration = 0.4f;
+
+        private bool _rotating;
+
+        public void TryRotate()
+        {
+            if (!CanOperate()) return;
+            StartCoroutine(RotateAroundWorldAxis(Vector3.up, rotateStepDegrees, rotateDuration));
+        }
+
+        public void TryFlip()
+        {
+            if (!CanOperate()) return;
+            StartCoroutine(RotateAroundWorldAxis(Vector3.forward, flipDegrees, flipDuration));
+        }
+
+        private bool CanOperate()
+        {
+            if (_rotating) return false;
+            if (standSurface == null || !standSurface.PlayerIsStanding) return false;
+            if (GameManager.Instance != null && (GameManager.Instance.IsGameOver || GameManager.Instance.Cleared)) return false;
+            return true;
+        }
+
+        private IEnumerator RotateAroundWorldAxis(Vector3 worldAxis, float degrees, float duration)
+        {
+            _rotating = true;
+            if (standSurface != null) standSurface.BeginForcedCarry();
+
+            Quaternion start = transform.rotation;
+            Quaternion end = Quaternion.AngleAxis(degrees, worldAxis) * start;
+            float t = 0f;
+
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                transform.rotation = Quaternion.Slerp(start, end, Mathf.Clamp01(t / duration));
+                yield return null;
+            }
+
+            transform.rotation = end;
+
+            if (standSurface != null) standSurface.EndForcedCarry();
+            _rotating = false;
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/StandSurface.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 바닥/리프트 등 위에 플레이어가 올라서면, 플레이어를 그 대상의 자식으로 붙여서
+    // 회전하거나 움직일 때 플레이어도 함께 따라가게 만드는 공용 컴포넌트
+    // (모뉴먼트 밸리처럼 "바닥과 함께 플레이어도 돈다"를 구현하는 핵심 트릭).
+    public class StandSurface : MonoBehaviour
+    {
+        [Tooltip("플레이어를 자식으로 붙일 대상. 비워두면 이 오브젝트의 부모(바닥 본체)를 사용한다.")]
+        public Transform attachTarget;
+
+        public bool PlayerIsStanding { get; private set; }
+
+        private Rigidbody _standingRb;
+        private bool _ignoreExit;
+
+        private void Reset()
+        {
+            var col = GetComponent<Collider>();
+            if (col != null) col.isTrigger = true;
+        }
+
+        private Transform Target => attachTarget != null ? attachTarget : (transform.parent != null ? transform.parent : transform);
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (!other.CompareTag("Player")) return;
+            PlayerIsStanding = true;
+            _standingRb = other.attachedRigidbody;
+            RecordSafeHere();
+            other.transform.SetParent(Target, true);
+        }
+
+        private void OnTriggerStay(Collider other)
+        {
+            if (!other.CompareTag("Player")) return;
+            RecordSafeHere();
+        }
+
+        private void OnTriggerExit(Collider other)
+        {
+            if (!other.CompareTag("Player")) return;
+            if (_ignoreExit) return; // 회전/뒤집기 애니메이션 도중의 일시적 충돌 변화는 '떨어짐'으로 치지 않음
+            PlayerIsStanding = false;
+            _standingRb = null;
+            other.transform.SetParent(null, true);
+        }
+
+        // 플레이어가 이 블록 위에서 떨어졌을 때 되돌아갈 위치 = 이 트리거(=블록 중앙)의 위치.
+        // 플레이어의 순간 좌표(가장자리일 수 있음) 대신 블록 중앙을 기록해서,
+        // 리스폰하자마자 다시 떨어지는 문제를 막는다.
+        private void RecordSafeHere()
+        {
+            if (GameManager.Instance != null) GameManager.Instance.RecordSafePosition(transform.position);
+        }
+
+        // RotatingFloor가 회전/뒤집기 애니메이션 도중 플레이어를 강제로 붙잡아둘 때 사용.
+        // 중력을 끄고 속도를 0으로 만들어서 바닥이 뒤집히는 동안에도 떨어지지 않고 같이 돈다.
+        // 트리거 OnExit도 무시해서 일시적인 충돌 변화로 떨어진 것으로 처리되지 않게 한다.
+        public void BeginForcedCarry()
+        {
+            _ignoreExit = true;
+            if (_standingRb != null)
+            {
+                _standingRb.useGravity = false;
+                _standingRb.linearVelocity = Vector3.zero;
+                _standingRb.angularVelocity = Vector3.zero;
+            }
+        }
+
+        public void EndForcedCarry()
+        {
+            _ignoreExit = false;
+            if (_standingRb != null)
+            {
+                _standingRb.useGravity = true;
+            }
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/PressurePlate.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 플레이어나 밀 수 있는 오브젝트(PushableBlock)가 올라서면 눌리는 압력판(발판).
+    // FloorLift 등 다른 스크립트가 IsPressed를 읽어서 반응하면 된다.
+    public class PressurePlate : MonoBehaviour
+    {
+        public bool IsPressed => _weightCount > 0;
+
+        private int _weightCount;
+
+        private void Reset()
+        {
+            var col = GetComponent<Collider>();
+            if (col != null) col.isTrigger = true;
+        }
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (!CanPress(other)) return;
+            _weightCount++;
+        }
+
+        private void OnTriggerExit(Collider other)
+        {
+            if (!CanPress(other)) return;
+            _weightCount = Mathf.Max(0, _weightCount - 1);
+        }
+
+        private bool CanPress(Collider other)
+        {
+            return other.CompareTag("Player") || other.GetComponentInParent<PushableBlock>() != null;
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/FloorLift.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 압력판을 밟은 뒤 pressDelay(기본 1.5초)가 지나야 올라가기 시작하고,
+    // 발판에서 내려온 뒤에도 releaseDelay(기본 1.5초)동안은 계속 올라가 있는 상태를 유지하는 리프트.
+    public class FloorLift : MonoBehaviour
+    {
+        public PressurePlate trigger;
+        public float raisedHeight = 2f;
+        public float moveSpeed = 2f;
+        [Tooltip("체크하면 한 번 올라간 뒤로는 계속 올라가 있는 상태 유지")]
+        public bool staysUpOncePressed = false;
+        [Tooltip("발판을 밟은 뒤, 이 시간(초)이 지나야 실제로 올라가기 시작한다")]
+        public float pressDelay = 1.5f;
+        [Tooltip("발판에서 내려온 뒤, 이 시간(초) 동안은 계속 올라가 있는 상태를 유지한다 (건너갈 시간을 줌)")]
+        public float releaseDelay = 1.5f;
+
+        private Vector3 _downPos;
+        private Vector3 _upPos;
+        private bool _everPressed;
+        private float _pressTimer;
+        private float _releaseTimer;
+
+        private void Start()
+        {
+            _downPos = transform.position;
+            _upPos = _downPos + Vector3.up * raisedHeight;
+        }
+
+        private void Update()
+        {
+            bool pressed = trigger != null && trigger.IsPressed;
+
+            if (pressed) _pressTimer += Time.deltaTime;
+            else _pressTimer = 0f;
+
+            bool pressedLongEnough = _pressTimer >= pressDelay;
+
+            if (pressedLongEnough)
+            {
+                _everPressed = true;
+                _releaseTimer = releaseDelay; // 실제로 올라간 뒤에만 '내려가기 전 유예시간'을 채워준다
+            }
+            else if (_releaseTimer > 0f)
+            {
+                _releaseTimer -= Time.deltaTime;
+            }
+
+            bool holdingUp = staysUpOncePressed ? _everPressed : (pressedLongEnough || _releaseTimer > 0f);
+            Vector3 target = holdingUp ? _upPos : _downPos;
+            transform.position = Vector3.MoveTowards(transform.position, target, moveSpeed * Time.deltaTime);
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/PushableBlock.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 플레이어가 물리적으로 밀 수 있는 오브젝트. 압력판(PressurePlate) 위에 올려두면
+    // 계속 눌러놓을 수 있다 ("발판을 누를 수 있는 무언가").
+    [RequireComponent(typeof(Rigidbody))]
+    public class PushableBlock : MonoBehaviour
+    {
+        private void Reset()
+        {
+            var rb = GetComponent<Rigidbody>();
+            rb.mass = 2f;
+            rb.linearDamping = 2f;
+            rb.angularDamping = 4f;
+            rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/WatcherVision.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 감시자의 고정(또는 좌우 왕복) 시야 범위. 바닥에 둥근 원형 영역으로 표시되며,
+    // 플레이어가 그 원 안(수평 거리 기준) + 적절한 높이 범위에 들어오면 즉시 발각 처리한다.
+    public class WatcherVision : MonoBehaviour
+    {
+        [Tooltip("시야 영역의 중심을 이 오브젝트 기준 로컬 좌표로 얼마나 띄울지")]
+        public Vector3 zoneOffset = new Vector3(0f, 0f, 1.5f);
+        [Tooltip("시야 영역의 반지름 (바닥에 보이는 원의 크기)")]
+        public float zoneRadius = 1.5f;
+        [Tooltip("수직으로 허용하는 높이 범위 (이 범위를 벗어난 높이에 있으면 발각되지 않음, 다른 층 분리용)")]
+        public float zoneHeight = 1.2f;
+
+        [Header("순찰 (선택)")]
+        public bool patrol;
+        public float patrolDistance = 2f;
+        public float patrolSpeed = 1f;
+
+        private Vector3 _patrolStart;
+        private Transform _player;
+
+        private void Start()
+        {
+            _patrolStart = transform.position;
+            var playerObj = GameObject.FindGameObjectWithTag("Player");
+            if (playerObj != null) _player = playerObj.transform;
+        }
+
+        private void Update()
+        {
+            if (patrol)
+            {
+                float x = Mathf.Sin(Time.time * patrolSpeed) * patrolDistance;
+                transform.position = _patrolStart + transform.right * x;
+            }
+
+            if (_player == null || GameManager.Instance == null) return;
+            if (GameManager.Instance.IsGameOver || GameManager.Instance.Cleared) return;
+
+            if (IsInsideZone(_player.position))
+            {
+                GameManager.Instance.OnDetected();
+            }
+        }
+
+        public Vector3 GetZoneCenter()
+        {
+            return transform.TransformPoint(zoneOffset);
+        }
+
+        public bool IsInsideZone(Vector3 worldPos)
+        {
+            Vector3 center = GetZoneCenter();
+            float dx = worldPos.x - center.x;
+            float dz = worldPos.z - center.z;
+            if ((dx * dx + dz * dz) > zoneRadius * zoneRadius) return false;
+            return Mathf.Abs(worldPos.y - center.y) <= zoneHeight;
+        }
+
+        private void OnDrawGizmos()
+        {
+            Vector3 center = GetZoneCenter();
+            Gizmos.color = new Color(1f, 0f, 0f, 0.25f);
+            Gizmos.DrawSphere(center, zoneRadius * 0.98f);
+            Gizmos.color = new Color(1f, 0f, 0f, 0.8f);
+            Gizmos.DrawWireSphere(center, zoneRadius);
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/WatcherTouch.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 몬스터(방해 캐릭터)의 몸에 직접 닿아도 시야 감지(WatcherVision)와 동일하게 '발각' 처리한다.
+    public class WatcherTouch : MonoBehaviour
+    {
+        private void OnCollisionEnter(Collision collision)
+        {
+            if (collision.collider.CompareTag("Player") && GameManager.Instance != null)
+                GameManager.Instance.OnDetected();
+        }
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (other.CompareTag("Player") && GameManager.Instance != null)
+                GameManager.Instance.OnDetected();
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/FloorClickRouter.cs =====
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+namespace DokkaebiStoneBridge
+{
+    // 마우스 클릭을 레이캐스트해서, 클릭된 바닥(RotatingFloor)에게 동작을 요청한다.
+    // 그냥 클릭 = 45도 회전, E키를 누른 채 클릭 = Z축 뒤집기.
+    // 주의: 플레이어가 바닥 위에 서 있으면 카메라 레이가 바닥보다 플레이어(캡슐)를 먼저
+    // 맞추는 경우가 많다. 그러면 클릭이 씹힌 것처럼 보이므로, Player 태그는 건너뛰고
+    // 그 다음으로 가까운 히트를 검사한다.
+    public class FloorClickRouter : MonoBehaviour
+    {
+        public LayerMask clickMask = ~0;
+
+        private void Update()
+        {
+            if (Mouse.current == null) return;
+            if (!Mouse.current.leftButton.wasPressedThisFrame) return;
+
+            var cam = Camera.main;
+            if (cam == null) return;
+
+            var ray = cam.ScreenPointToRay(Mouse.current.position.ReadValue());
+            var hits = Physics.RaycastAll(ray, 200f, clickMask);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+            RotatingFloor floor = null;
+            Collider usedCollider = null;
+            foreach (var h in hits)
+            {
+                if (h.collider.CompareTag("Player")) continue; // 플레이어 자신은 클릭 대상에서 제외
+                var f = h.collider.GetComponentInParent<RotatingFloor>();
+                if (f != null)
+                {
+                    floor = f;
+                    usedCollider = h.collider;
+                    break;
+                }
+            }
+
+            if (floor == null)
+            {
+                Debug.Log("[FloorClickRouter] 클릭했지만 회전 가능한 바닥을 찾지 못함 (히트 수: " + hits.Length + ")");
+                return;
+            }
+
+            bool flipHeld = Keyboard.current != null && Keyboard.current.eKey.isPressed;
+            Debug.Log("[FloorClickRouter] 클릭 대상: " + usedCollider.name + " / " + (flipHeld ? "뒤집기(E+클릭)" : "회전(클릭)"));
+            if (flipHeld) floor.TryFlip();
+            else floor.TryRotate();
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/PlayerMover.cs =====
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+namespace DokkaebiStoneBridge
+{
+    // WASD로 직접 움직이는 플레이어 이동. 물리 기반(Rigidbody)이라
+    // PushableBlock을 자연스럽게 밀 수 있다.
+    // (이 프로젝트는 새 Input System을 쓰므로 레거시 UnityEngine.Input은 사용하지 않는다.)
+    [RequireComponent(typeof(Rigidbody))]
+    public class PlayerMover : MonoBehaviour
+    {
+        public float moveSpeed = 4f;
+        public float turnSpeed = 12f;
+
+        private Rigidbody _rb;
+
+        private void Awake()
+        {
+            _rb = GetComponent<Rigidbody>();
+            _rb.freezeRotation = true; // 충돌로 데굴데굴 구르지 않게
+        }
+
+        private void FixedUpdate()
+        {
+            bool locked = GameManager.Instance != null &&
+                          (GameManager.Instance.IsGameOver || GameManager.Instance.Cleared);
+
+            if (locked)
+            {
+                var stay = _rb.linearVelocity;
+                _rb.linearVelocity = new Vector3(0f, stay.y, 0f);
+                return;
+            }
+
+            Vector2 input = ReadInput();
+            Vector3 move = new Vector3(input.x, 0f, input.y);
+            if (move.sqrMagnitude > 1f) move.Normalize();
+
+            Vector3 vel = move * moveSpeed;
+            vel.y = _rb.linearVelocity.y; // 수직 속도(중력, 리프트 등)는 건드리지 않음
+            _rb.linearVelocity = vel;
+
+            if (move.sqrMagnitude > 0.0001f)
+            {
+                Quaternion target = Quaternion.LookRotation(move, Vector3.up);
+                transform.rotation = Quaternion.Slerp(transform.rotation, target, turnSpeed * Time.fixedDeltaTime);
+            }
+        }
+
+        private Vector2 ReadInput()
+        {
+            var kb = Keyboard.current;
+            if (kb == null) return Vector2.zero;
+
+            float x = 0f, y = 0f;
+            if (kb.aKey.isPressed) x -= 1f;
+            if (kb.dKey.isPressed) x += 1f;
+            if (kb.sKey.isPressed) y -= 1f;
+            if (kb.wKey.isPressed) y += 1f;
+            return new Vector2(x, y);
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/PlayerRespawn.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 플레이어가 바닥 밖으로 떨어지면 마지막 안전 위치로, 발각/몬스터 접촉 시에는
+    // GameManager가 지정하는 위치(시작 지점)로 리스폰시킨다.
+    [RequireComponent(typeof(Rigidbody))]
+    public class PlayerRespawn : MonoBehaviour
+    {
+        public float fallY = -10f;
+
+        private Rigidbody _rb;
+
+        private void Awake()
+        {
+            _rb = GetComponent<Rigidbody>();
+        }
+
+        private void Update()
+        {
+            if (transform.position.y < fallY)
+            {
+                RespawnToLastSafe();
+            }
+        }
+
+        public void RespawnToLastSafe()
+        {
+            Vector3 target = GameManager.Instance != null ? GameManager.Instance.LastSafePosition : transform.position;
+            RespawnTo(target);
+        }
+
+        public void RespawnTo(Vector3 target)
+        {
+            transform.SetParent(null, true);
+            transform.position = target + Vector3.up * 0.3f;
+
+            if (_rb != null)
+            {
+                _rb.linearVelocity = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+            }
+
+            Debug.Log("[PlayerRespawn] 리스폰 위치: " + target);
+        }
+    }
+}
+
+

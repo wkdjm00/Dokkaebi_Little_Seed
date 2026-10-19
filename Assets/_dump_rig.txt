@@ -1,0 +1,163 @@
+~DokkaebiMechanicsTest_v5 (TEST ONLY - 지워도 됨) | pos=(0.00, 0.00, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+  Systems | pos=(0.00, 0.00, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+    [Component] GameManager
+       .gameOverColor = RGBA(0.450, 0.050, 0.050, 1.000)
+       .clearColor = RGBA(0.950, 0.850, 0.400, 1.000)
+       .detectFlashDuration = 0.3
+       .skipTitleForTesting = False
+       .totalFragments = 0
+    [Component] FloorClickRouter
+       .clickMask = (LayerMask)
+    UIManager | pos=(0.00, 0.00, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+      [Component] UIManager
+         .gameTitle = 도깨비 돌다리 (가제)
+         .subtitle = 씨앗을 모아 세계수를 되살리자
+         .scrimColor = RGBA(0.170, 0.120, 0.240, 0.820)
+         .cardColor = RGBA(1.000, 0.960, 0.880, 1.000)
+         .cardShadowColor = RGBA(0.250, 0.150, 0.100, 0.220)
+         .textColor = RGBA(0.360, 0.240, 0.220, 1.000)
+         .titleColor = RGBA(0.930, 0.530, 0.220, 1.000)
+         .primaryButtonColor = RGBA(1.000, 0.640, 0.520, 1.000)
+         .secondaryButtonColor = RGBA(0.620, 0.850, 0.750, 1.000)
+         .dangerButtonColor = RGBA(0.860, 0.500, 0.460, 1.000)
+         .accentGold = RGBA(1.000, 0.780, 0.340, 1.000)
+         .lockedColor = RGBA(0.620, 0.600, 0.580, 1.000)
+    SkyController | pos=(0.00, 0.00, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+      [Component] SkyController
+         .nightBackgroundColor = RGBA(0.030, 0.040, 0.120, 1.000)
+         .dayBackgroundColor = RGBA(0.550, 0.750, 0.950, 1.000)
+         .sunLight = Directional Light (UnityEngine.Light)
+         .nightSunColor = RGBA(0.050, 0.050, 0.100, 1.000)
+         .daySunColor = RGBA(1.000, 0.950, 0.850, 1.000)
+         .nightSunIntensity = 0.05
+         .daySunIntensity = 1.2
+         .nightSunEuler = (70.00, -30.00, 0.00)
+         .daySunEuler = (45.00, -30.00, 0.00)
+         .nightSkyGroup = NightSkyGroup (별 모델 배치용) (UnityEngine.Transform)
+         .daySkyGroup = DaySkyGroup (태양-구름 모델 배치용) (UnityEngine.Transform)
+         .transitionDuration = 4
+         .enableTestKey = True
+  StartArea (static) | pos=(0.00, 0.00, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+    Visual | pos=(0.00, 0.00, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(4.00, 0.40, 4.00) active=True
+      [Component] MeshFilter
+      [Component] BoxCollider
+         isTrigger=False
+         box center=(0.00, 0.00, 0.00) size=(1.00, 1.00, 1.00)
+      [Component] MeshRenderer
+    StandTrigger | pos=(0.00, 0.50, 0.00) localPos=(0.00, 0.50, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+      [Component] BoxCollider
+         isTrigger=True
+         box center=(0.00, 0.00, 0.00) size=(4.00, 1.00, 4.00)
+      [Component] StandSurface
+         .attachTarget = StartArea (static) (UnityEngine.Transform)
+  Floor_A (RotatingFloor) | pos=(0.00, 0.00, -3.10) localPos=(0.00, 0.00, -3.10) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+    [Component] RotatingFloor
+       .standSurface = StandTrigger (DokkaebiStoneBridge.StandSurface)
+       .rotateStepDegrees = 90
+       .rotateDuration = 0.25
+       .flipDegrees = 180
+       .flipDuration = 0.4
+    RotationMarker | pos=(0.90, 0.20, -3.10) localPos=(0.90, 0.20, 0.00) rot=(0.00, 0.00, 0.00) scale=(0.30, 0.12, 0.30) active=True
+      [Component] MeshFilter
+      [Component] MeshRenderer
+    StandTrigger | pos=(0.00, 0.50, -3.10) localPos=(0.00, 0.50, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+      [Component] BoxCollider
+         isTrigger=True
+         box center=(0.00, 0.00, 0.00) size=(2.20, 1.00, 2.20)
+      [Component] StandSurface
+         .attachTarget = Floor_A (RotatingFloor) (UnityEngine.Transform)
+    Visual | pos=(0.00, 0.00, -3.10) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(2.20, 0.40, 2.20) active=True
+      [Component] MeshFilter
+      [Component] BoxCollider
+         isTrigger=False
+         box center=(0.00, 0.00, 0.00) size=(1.00, 1.00, 1.00)
+      [Component] MeshRenderer
+  PressurePlate | pos=(-1.30, 0.23, 1.30) localPos=(-1.30, 0.23, 1.30) rot=(0.00, 0.00, 0.00) scale=(0.90, 0.05, 0.90) active=True
+    [Component] MeshFilter
+    [Component] CapsuleCollider
+       isTrigger=True
+    [Component] MeshRenderer
+    [Component] PressurePlate
+  PushableBlock | pos=(-1.30, 0.60, 0.00) localPos=(-1.30, 0.60, 0.00) rot=(0.00, 0.00, 0.00) scale=(0.80, 0.80, 0.80) active=True
+    [Component] MeshFilter
+    [Component] BoxCollider
+       isTrigger=False
+       box center=(0.00, 0.00, 0.00) size=(1.00, 1.00, 1.00)
+    [Component] MeshRenderer
+    [Component] Rigidbody
+    [Component] PushableBlock
+  FloorLift | pos=(3.10, -1.50, 0.00) localPos=(3.10, -1.50, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+    [Component] FloorLift
+       .trigger = PressurePlate (DokkaebiStoneBridge.PressurePlate)
+       .raisedHeight = 2.5
+       .moveSpeed = 2
+       .staysUpOncePressed = False
+       .pressDelay = 1.5
+       .releaseDelay = 1.5
+    StandTrigger | pos=(3.10, -1.00, 0.00) localPos=(0.00, 0.50, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+      [Component] BoxCollider
+         isTrigger=True
+         box center=(0.00, 0.00, 0.00) size=(2.20, 1.00, 2.20)
+      [Component] StandSurface
+         .attachTarget = FloorLift (UnityEngine.Transform)
+    Visual | pos=(3.10, -1.50, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(2.20, 0.40, 2.20) active=True
+      [Component] MeshFilter
+      [Component] BoxCollider
+         isTrigger=False
+         box center=(0.00, 0.00, 0.00) size=(1.00, 1.00, 1.00)
+      [Component] MeshRenderer
+  ExitArea (static, elevated) | pos=(5.20, 1.00, 0.00) localPos=(5.20, 1.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+    Visual | pos=(5.20, 1.00, 0.00) localPos=(0.00, 0.00, 0.00) rot=(0.00, 0.00, 0.00) scale=(2.00, 0.40, 2.00) active=True
+      [Component] MeshFilter
+      [Component] BoxCollider
+         isTrigger=False
+         box center=(0.00, 0.00, 0.00) size=(1.00, 1.00, 1.00)
+      [Component] MeshRenderer
+    StandTrigger | pos=(5.20, 1.50, 0.00) localPos=(0.00, 0.50, 0.00) rot=(0.00, 0.00, 0.00) scale=(1.00, 1.00, 1.00) active=True
+      [Component] BoxCollider
+         isTrigger=True
+         box center=(0.00, 0.00, 0.00) size=(2.00, 1.00, 2.00)
+      [Component] StandSurface
+         .attachTarget = ExitArea (static, elevated) (UnityEngine.Transform)
+  EndingAltar | pos=(5.20, 1.70, 0.00) localPos=(5.20, 1.70, 0.00) rot=(0.00, 0.00, 0.00) scale=(0.60, 1.00, 0.60) active=True
+    [Component] MeshFilter
+    [Component] BoxCollider
+       isTrigger=True
+       box center=(0.00, 0.00, 0.00) size=(1.00, 1.00, 1.00)
+    [Component] MeshRenderer
+    [Component] EndingAltar
+    [Component] SpinFx
+       .spinSpeed = 90
+  SeedFragment_A | pos=(1.30, 1.00, 1.30) localPos=(1.30, 1.00, 1.30) rot=(0.00, 0.00, 0.00) scale=(0.35, 0.35, 0.35) active=True
+    [Component] MeshFilter
+    [Component] SphereCollider
+       isTrigger=True
+       sphere center=(0.00, 0.00, 0.00) radius=0.5
+    [Component] MeshRenderer
+    [Component] SeedFragment
+    [Component] SpinFx
+       .spinSpeed = 90
+    [Component] SeedGlowEffect
+       .glowColor = RGBA(1.000, 0.950, 0.500, 1.000)
+       .bobSpeed = 2
+       .bobHeight = 0.15
+       .spinSpeed = 60
+  Watcher_SkyTribe | pos=(1.60, 0.90, -1.30) localPos=(1.60, 0.90, -1.30) rot=(0.00, 286.70, 0.00) scale=(1.00, 1.00, 1.00) active=True
+    [Component] MeshFilter
+    [Component] CapsuleCollider
+       isTrigger=False
+    [Component] MeshRenderer
+    [Component] WatcherVision
+       .zoneOffset = (-1.20, 0.50, 0.40)
+       .zoneRadius = 1.5
+       .zoneHeight = 1.2
+       .patrol = False
+       .patrolDistance = 2
+       .patrolSpeed = 1
+    [Component] WatcherTouch
+    [Component] VisionZoneVisualizer
+       .zoneColor = RGBA(1.000, 0.150, 0.150, 0.300)
+       .pulseSpeed = 2
+       .pulseAmount = 0.1
+       .groundOffset = 0.02
+       .groundMask = (LayerMask)

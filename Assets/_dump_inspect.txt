@@ -1,0 +1,474 @@
+===== Assets/_DokkaebiStoneBridge/Scripts/GameManager.cs =====
+using UnityEngine;
+using UnityEngine.InputSystem;
+using System.Collections;
+
+namespace DokkaebiStoneBridge
+{
+    // 게임 전체 상태(타이틀 / 스테이지 선택 / 진행 중 / 일시정지 / 클리어)를 관리하는 싱글턴.
+    // 발각/몬스터 접촉은 '게임 오버'로 멈추지 않고, 시작 지점으로 즉시
+    // 리스폰시키는 패널티로 처리한다 (클리어 상태만 완전히 멈춘다).
+    public class GameManager : MonoBehaviour
+    {
+        public enum GameState { Title, StageSelect, Playing, Paused, Cleared }
+
+        public static GameManager Instance { get; private set; }
+
+        public bool IsGameOver { get; private set; }
+        public bool Cleared { get; private set; }
+        public GameState State { get; private set; } = GameState.Title;
+
+        public event System.Action<GameState> OnStateChanged;
+        public event System.Action<int, int> OnSeedCountChanged;
+
+        [Tooltip("발각/접촉 시 잠깐 깜빡이는 카메라 색")]
+        public Color gameOverColor = new Color(0.45f, 0.05f, 0.05f);
+        [Tooltip("클리어했을 때 카메라 배경색")]
+        public Color clearColor = new Color(0.95f, 0.85f, 0.4f);
+        public float detectFlashDuration = 0.3f;
+
+        [Tooltip("true면 시작하자마자 바로 플레이 상태(타이틀/스테이지 선택 생략, 테스트용)")]
+        public bool skipTitleForTesting = false;
+
+        public int totalFragments;
+        private int _collected;
+        private Camera _cam;
+
+        private const string PendingStageKey = "DSB_PendingStage";
+
+        public Vector3 LastSafePosition { get; private set; }
+        public Vector3 StartPosition { get; private set; }
+
+        public int CollectedFragments => _collected;
+
+        // 현재 플레이 중인 스테이지 번호(1~5). 지금은 스테이지가 하나뿐이라 전부 같은 씬을
+        // 재시작하는 식으로 동작하지만, 나중에 스테이지별 씬이 생기면 SelectStage()에서
+        // SceneManager.LoadScene(스테이지별 씬 이름)으로 바꾸면 된다.
+        public int CurrentStage { get; private set; } = 1;
+
+        private void Awake()
+        {
+            Instance = this;
+            _cam = Camera.main;
+        }
+
+        private void Start()
+        {
+            totalFragments = FindObjectsByType<SeedFragment>(FindObjectsInactive.Exclude).Length;
+
+            var player = GameObject.FindGameObjectWithTag("Player");
+            if (player != null)
+            {
+                LastSafePosition = player.transform.position;
+                StartPosition = player.transform.position;
+            }
+
+            int pendingStage = PlayerPrefs.GetInt(PendingStageKey, -1);
+            if (pendingStage >= 1)
+            {
+                PlayerPrefs.DeleteKey(PendingStageKey);
+                CurrentStage = pendingStage;
+                State = GameState.Playing;
+                Time.timeScale = 1f;
+            }
+            else
+            {
+                State = skipTitleForTesting ? GameState.Playing : GameState.Title;
+                Time.timeScale = State == GameState.Title ? 0f : 1f;
+            }
+
+            OnStateChanged?.Invoke(State);
+            OnSeedCountChanged?.Invoke(_collected, totalFragments);
+        }
+
+        private void Update()
+        {
+            if (Cleared && Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
+            {
+                RestartLevel();
+                return;
+            }
+
+            if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+            {
+                if (State == GameState.Playing || State == GameState.Paused)
+                {
+                    TogglePause();
+                }
+            }
+        }
+
+        public void RecordSafePosition(Vector3 pos)
+        {
+            LastSafePosition = pos;
+        }
+
+        public void StartGame()
+        {
+            if (State != GameState.Title) return;
+            State = GameState.Playing;
+            Time.timeScale = 1f;
+            OnStateChanged?.Invoke(State);
+        }
+
+        // 리로드 없이 바로 특정 스테이지 플레이를 시작한다 (처음 실행 시 스테이지 선택을
+        // 건너뛰고 바로 1스테이지로 들어갈 때 사용).
+        public void BeginStage(int stage)
+        {
+            CurrentStage = Mathf.Clamp(stage, 1, StageProgress.StageCount);
+            State = GameState.Playing;
+            Time.timeScale = 1f;
+            OnStateChanged?.Invoke(State);
+        }
+
+        public void TogglePause()
+        {
+            if (State == GameState.Playing)
+            {
+                State = GameState.Paused;
+                Time.timeScale = 0f;
+                OnStateChanged?.Invoke(State);
+            }
+            else if (State == GameState.Paused)
+            {
+                State = GameState.Playing;
+                Time.timeScale = 1f;
+                OnStateChanged?.Invoke(State);
+            }
+        }
+
+        // 타이틀 화면의 '시작하기', 일시정지 메뉴의 '나가기' 둘 다 여기로 온다.
+        public void OpenStageSelect()
+        {
+            if (State == GameState.Cleared) return;
+            State = GameState.StageSelect;
+            Time.timeScale = 0f;
+            OnStateChanged?.Invoke(State);
+        }
+
+        public void BackToTitleFromStageSelect()
+        {
+            if (State != GameState.StageSelect) return;
+            State = GameState.Title;
+            Time.timeScale = 0f;
+            OnStateChanged?.Invoke(State);
+        }
+
+        // 스테이지 선택 화면에서 스테이지를 고르면 호출됨. 잠긴 스테이지는 무시한다.
+        public void SelectStage(int stage)
+        {
+            if (!StageProgress.IsUnlocked(stage)) return;
+
+            PlayerPrefs.SetInt(PendingStageKey, stage);
+            PlayerPrefs.Save();
+
+            Time.timeScale = 1f;
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            UnityEngine.SceneManagement.SceneManager.LoadScene(scene.name);
+        }
+
+        public void QuitToTitle()
+        {
+            Time.timeScale = 1f;
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            UnityEngine.SceneManagement.SceneManager.LoadScene(scene.name);
+        }
+
+        public void QuitGame()
+        {
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
+        }
+
+        // 몬스터 시야에 들어오거나(WatcherVision) 몬스터 몸에 직접 닿으면(WatcherTouch) 호출됨.
+        public void OnDetected()
+        {
+            if (Cleared) return;
+            Debug.Log("[GameManager] 발각/몬스터 접촉! 시작 지점으로 리스폰합니다.");
+
+            if (_cam != null) StartCoroutine(FlashBackground(gameOverColor, detectFlashDuration));
+
+            var player = GameObject.FindGameObjectWithTag("Player");
+            var respawn = player != null ? player.GetComponent<PlayerRespawn>() : null;
+            if (respawn != null) respawn.RespawnTo(StartPosition);
+        }
+
+        private IEnumerator FlashBackground(Color flashColor, float duration)
+        {
+            if (_cam == null) yield break;
+            Color original = _cam.backgroundColor;
+            _cam.backgroundColor = flashColor;
+            yield return new WaitForSecondsRealtime(duration);
+            if (_cam != null && !Cleared) _cam.backgroundColor = original;
+        }
+
+        public void OnGoalReached()
+        {
+            if (Cleared) return;
+            Cleared = true;
+            State = GameState.Cleared;
+            if (_cam != null) _cam.backgroundColor = clearColor;
+            OnStateChanged?.Invoke(State);
+            Debug.Log("[GameManager] 클리어! 세계수가 되살아났습니다. R키로 다시 시작할 수 있습니다.");
+        }
+
+        public void RestartLevel()
+        {
+            Time.timeScale = 1f;
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            UnityEngine.SceneManagement.SceneManager.LoadScene(scene.name);
+        }
+
+        public void NotifyFragmentCollected()
+        {
+            _collected++;
+            OnSeedCountChanged?.Invoke(_collected, totalFragments);
+            Debug.Log(string.Format("[GameManager] 씨앗 조각 수집: {0}/{1}", _collected, totalFragments));
+        }
+
+        public bool AllFragmentsCollected => totalFragments > 0 && _collected >= totalFragments;
+
+        public bool WorldTreeRevived { get; private set; }
+
+        // 세계수(EndingAltar)에 닿았을 때 호출됨. 게임을 끝내는 대신 하늘을 밤->아침으로 전환시키고,
+        // 현재 스테이지를 클리어 처리해서 다음 스테이지 잠금을 풀어준다.
+        public void OnWorldTreeTouched()
+        {
+            if (WorldTreeRevived) return;
+            WorldTreeRevived = true;
+
+            Debug.Log("[GameManager] 세계수에 닿았다! 하늘이 밝아지기 시작합니다.");
+            StageProgress.MarkCleared(CurrentStage);
+
+            var sky = FindAnyObjectByType<SkyController>();
+            float dawnDelay = 2f;
+            if (sky != null)
+            {
+                dawnDelay = sky.transitionDuration;
+                sky.TriggerDawn();
+            }
+            else
+            {
+                Debug.LogWarning("[GameManager] SkyController를 찾을 수 없어 하늘 전환을 실행하지 못했습니다.");
+            }
+
+            // 하늘이 다 밝아진 다음 스테이지 선택 화면을 띄워서 바로 다음 스테이지로 넘어갈 수 있게 한다.
+            StartCoroutine(OpenStageSelectAfterDelay(dawnDelay));
+        }
+
+        private IEnumerator OpenStageSelectAfterDelay(float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            OpenStageSelect();
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/IsoCameraRig.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 모뉴먼트 밸리 느낌의 고정 아이소메트릭 시점.
+    [ExecuteAlways]
+    public class IsoCameraRig : MonoBehaviour
+    {
+        public Vector3 lookAtPoint = Vector3.zero;
+        public float distance = 12f;
+        public float orthoSize = 5f;
+
+        private void OnEnable() => Apply();
+        private void OnValidate() => Apply();
+
+        public void Apply()
+        {
+            var cam = GetComponent<Camera>();
+            if (cam == null) return;
+
+            cam.orthographic = true;
+            cam.orthographicSize = orthoSize;
+            transform.rotation = Quaternion.Euler(35.264f, 45f, 0f);
+            transform.position = lookAtPoint - transform.forward * distance;
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/EndingAltar.cs =====
+using UnityEngine;
+
+namespace DokkaebiStoneBridge
+{
+    // 모든 씨앗 조각을 모은 뒤 도깨비가 닿으면 세계수가 깨어나는 제단.
+    // 게임을 끝내는 게 아니라 밤->아침으로 하늘이 밝아지는 연출을 시작시킨다.
+    [RequireComponent(typeof(Collider))]
+    public class EndingAltar : MonoBehaviour
+    {
+        private void Reset()
+        {
+            GetComponent<Collider>().isTrigger = true;
+        }
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (!other.CompareTag("Player")) return;
+            if (GameManager.Instance == null) return;
+            if (!GameManager.Instance.AllFragmentsCollected) return;
+
+            GameManager.Instance.OnWorldTreeTouched();
+        }
+    }
+}
+
+
+===== Assets/_DokkaebiStoneBridge/Scripts/SkyController.cs =====
+using UnityEngine;
+using UnityEngine.InputSystem;
+using System.Collections;
+
+namespace DokkaebiStoneBridge
+{
+    // 밤(별이 보이는 어두운 배경) -> 아침(해와 구름이 있는 맑은 하늘)으로 전환되는
+    // 배경 연출 컨트롤러. 별/구름/태양 '모델'은 사용자가 직접 만들어서
+    // nightSkyGroup / daySkyGroup 아래에 배치할 예정이므로, 여기서는 배경색과
+    // 디렉셔널 라이트(태양) 값만 보간하고 두 그룹을 켜고 끄는 역할만 한다.
+    // TriggerDawn()은 추후 '세계수 성장 완료' 이벤트에서 호출하면 된다.
+    public class SkyController : MonoBehaviour
+    {
+        [Header("배경색")]
+        public Color nightBackgroundColor = new Color(0.03f, 0.04f, 0.12f);
+        public Color dayBackgroundColor = new Color(0.55f, 0.75f, 0.95f);
+
+        [Header("태양(디렉셔널 라이트)")]
+        public Light sunLight;
+        public Color nightSunColor = new Color(0.05f, 0.05f, 0.1f);
+        public Color daySunColor = new Color(1f, 0.95f, 0.85f);
+        public float nightSunIntensity = 0.05f;
+        public float daySunIntensity = 1.2f;
+        public Vector3 nightSunEuler = new Vector3(70f, -30f, 0f);
+        public Vector3 daySunEuler = new Vector3(45f, -30f, 0f);
+
+        [Header("배경 오브젝트 그룹 (모델 배치 전용 부모)")]
+        public Transform nightSkyGroup;
+        public Transform daySkyGroup;
+
+        public float transitionDuration = 4f;
+
+        [Header("테스트")]
+        [Tooltip("플레이 중 T키를 누르면 아침 전환을 테스트할 수 있다 (실제 연출은 세계수 성장 이벤트에서 TriggerDawn() 호출)")]
+        public bool enableTestKey = true;
+
+        private Camera _cam;
+        private bool _isDay;
+        private Coroutine _routine;
+
+        private void Awake()
+        {
+            _cam = Camera.main;
+            ApplyNightImmediate();
+        }
+
+        private void Update()
+        {
+            if (enableTestKey && Keyboard.current != null && Keyboard.current.tKey.wasPressedThisFrame)
+            {
+                TriggerDawn();
+            }
+        }
+
+        public void ApplyNightImmediate()
+        {
+            if (_cam != null)
+            {
+                _cam.clearFlags = CameraClearFlags.SolidColor;
+                _cam.backgroundColor = nightBackgroundColor;
+            }
+            if (sunLight != null)
+            {
+                sunLight.color = nightSunColor;
+                sunLight.intensity = nightSunIntensity;
+                sunLight.transform.rotation = Quaternion.Euler(nightSunEuler);
+            }
+            if (nightSkyGroup != null) nightSkyGroup.gameObject.SetActive(true);
+            if (daySkyGroup != null) daySkyGroup.gameObject.SetActive(false);
+            RenderSettings.fogColor = nightBackgroundColor;
+            RenderSettings.ambientLight = nightBackgroundColor;
+            _isDay = false;
+        }
+
+        public void TriggerDawn()
+        {
+            if (_isDay) return;
+            if (_routine != null) StopCoroutine(_routine);
+            _routine = StartCoroutine(DawnRoutine());
+        }
+
+        private IEnumerator DawnRoutine()
+        {
+            _isDay = true;
+            if (daySkyGroup != null) daySkyGroup.gameObject.SetActive(true);
+
+            Color camFrom = _cam != null ? _cam.backgroundColor : nightBackgroundColor;
+            Color sunColorFrom = sunLight != null ? sunLight.color : nightSunColor;
+            float sunIntFrom = sunLight != null ? sunLight.intensity : nightSunIntensity;
+            Quaternion sunRotFrom = sunLight != null ? sunLight.transform.rotation : Quaternion.Euler(nightSunEuler);
+            Quaternion sunRotTo = Quaternion.Euler(daySunEuler);
+
+            float t = 0f;
+            bool nightHidden = false;
+            while (t < transitionDuration)
+            {
+                t += Time.deltaTime;
+                float p = Mathf.Clamp01(t / transitionDuration);
+                float eased = p * p * (3f - 2f * p);
+
+                if (_cam != null) _cam.backgroundColor = Color.Lerp(camFrom, dayBackgroundColor, eased);
+                if (sunLight != null)
+                {
+                    sunLight.color = Color.Lerp(sunColorFrom, daySunColor, eased);
+                    sunLight.intensity = Mathf.Lerp(sunIntFrom, daySunIntensity, eased);
+                    sunLight.transform.rotation = Quaternion.Slerp(sunRotFrom, sunRotTo, eased);
+                }
+
+                Color ambientNow = _cam != null ? _cam.backgroundColor : dayBackgroundColor;
+                RenderSettings.fogColor = ambientNow;
+                RenderSettings.ambientLight = ambientNow;
+
+                if (!nightHidden && p > 0.5f && nightSkyGroup != null)
+                {
+                    nightSkyGroup.gameObject.SetActive(false);
+                    nightHidden = true;
+                }
+
+                yield return null;
+            }
+
+            if (_cam != null) _cam.backgroundColor = dayBackgroundColor;
+            Debug.Log("[SkyController] 아침 전환 완료 (세계수 성장 연출 훅 TriggerDawn()).");
+        }
+    }
+}
+
+
+===== SCENE ROOT OBJECTS =====
+Main Camera
+Directional Light
+Global Volume
+~DokkaebiMechanicsTest_v5 (TEST ONLY - 지워도 됨)
+  - Systems
+  - StartArea (static)
+  - Floor_A (RotatingFloor)
+  - PressurePlate
+  - PushableBlock
+  - FloorLift
+  - ExitArea (static, elevated)
+  - EndingAltar
+  - SeedFragment_A
+  - Watcher_SkyTribe
+Dokkaebi_Player
+NightSkyGroup (별 모델 배치용)
+DaySkyGroup (태양-구름 모델 배치용)
