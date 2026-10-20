@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using System.Collections;
+using System.Collections.Generic;
 
 namespace DokkaebiStoneBridge
 {
@@ -31,6 +32,9 @@ namespace DokkaebiStoneBridge
 
         public int totalFragments;
         private int _collected;
+        // 이번 '생'(리스폰 전)에 모았던 씨앗 조각들. 리스폰되면 전부 다시 활성화시켜서
+        // 처음부터 다시 모으게 한다.
+        private readonly List<SeedFragment> _collectedThisLife = new List<SeedFragment>();
         private Camera _cam;
 
         private const string PendingStageKey = "DSB_PendingStage";
@@ -241,11 +245,30 @@ namespace DokkaebiStoneBridge
             UnityEngine.SceneManagement.SceneManager.LoadScene(scene.name);
         }
 
-        public void NotifyFragmentCollected()
+        // SeedFragment가 수집될 때 호출. 어떤 씨앗이 수집됐는지 기록해 두었다가,
+        // 리스폰되면 ResetCollectedSeeds()에서 전부 되돌린다.
+        public void NotifyFragmentCollected(SeedFragment seed)
         {
             _collected++;
+            if (seed != null) _collectedThisLife.Add(seed);
             OnSeedCountChanged?.Invoke(_collected, totalFragments);
             Debug.Log(string.Format("[GameManager] 씨앗 조각 수집: {0}/{1}", _collected, totalFragments));
+        }
+
+        // 리스폰(발각/추락) 시 PlayerRespawn이 호출. 이번 생에 모았던 씨앗을 전부 되돌리고
+        // 수집 개수도 0으로 리셋한다.
+        public void ResetCollectedSeeds()
+        {
+            if (_collectedThisLife.Count == 0) return;
+
+            foreach (var seed in _collectedThisLife)
+            {
+                if (seed != null) seed.Reactivate();
+            }
+            _collectedThisLife.Clear();
+            _collected = 0;
+            OnSeedCountChanged?.Invoke(_collected, totalFragments);
+            Debug.Log("[GameManager] 리스폰: 수집했던 씨앗을 모두 되돌립니다.");
         }
 
         public bool AllFragmentsCollected => totalFragments > 0 && _collected >= totalFragments;

@@ -9,7 +9,7 @@ namespace DokkaebiStoneBridge
     [RequireComponent(typeof(Rigidbody))]
     public class PlayerMover : MonoBehaviour
     {
-        public float moveSpeed = 4f;
+        public float moveSpeed = 3.4f;
         public float turnSpeed = 12f;
 
         private Rigidbody _rb;
