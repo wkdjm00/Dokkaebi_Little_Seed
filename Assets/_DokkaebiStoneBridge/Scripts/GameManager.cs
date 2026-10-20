@@ -297,14 +297,24 @@ namespace DokkaebiStoneBridge
                 Debug.LogWarning("[GameManager] SkyController를 찾을 수 없어 하늘 전환을 실행하지 못했습니다.");
             }
 
-            // 하늘이 다 밝아진 다음 스테이지 선택 화면을 띄워서 바로 다음 스테이지로 넘어갈 수 있게 한다.
-            StartCoroutine(OpenStageSelectAfterDelay(dawnDelay));
+            // 클리어 연출(흔들림 + 별이 흔들리다 떨어짐)이 끝나면 스테이지 선택 화면 없이
+            // 바로 다음 스테이지로 넘어간다. 마지막 스테이지까지 전부 클리어했을 때만
+            // 더 이상 갈 다음 스테이지가 없으므로 스테이지 선택 화면을 띄운다.
+            StartCoroutine(AdvanceToNextStageAfterDelay(dawnDelay));
         }
 
-        private IEnumerator OpenStageSelectAfterDelay(float delay)
+        private IEnumerator AdvanceToNextStageAfterDelay(float delay)
         {
             yield return new WaitForSeconds(delay);
-            OpenStageSelect();
+
+            int next = CurrentStage + 1;
+            if (next > StageProgress.StageCount)
+            {
+                OpenStageSelect();
+                yield break;
+            }
+
+            SelectStage(next);
         }
     }
 }

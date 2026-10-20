@@ -143343,15 +143343,22 @@ MonoBehaviour:
   daySunEuler: {x: 45, y: -30, z: 0}
   nightSkyGroup: {fileID: 101225906}
   daySkyGroup: {fileID: 1770821443}
-  transitionDuration: 4
+  transitionDuration: 1.5
   starColor: {r: 1, g: 0.95, b: 0.82, a: 1}
-  starMinSize: 14
-  starMaxSize: 46
+  starPrefabs:
+  - {fileID: 919132149155446097, guid: 7ea7af3591482104aa97641764e333ce, type: 3}
+  - {fileID: 919132149155446097, guid: fc7688075ed301b47a678dc8d9af6806, type: 3}
+  - {fileID: 919132149155446097, guid: 9365768847a70e34281e555542b6fa4d, type: 3}
+  - {fileID: 919132149155446097, guid: 99c617b2171ed0145947de42a00b13d3, type: 3}
+  - {fileID: 919132149155446097, guid: 11c9e61c6612d0e4fb94d1104b8342a1, type: 3}
+  - {fileID: 919132149155446097, guid: abe6f26d3356cb944a16c68328ffccb2, type: 3}
+  - {fileID: 919132149155446097, guid: e4f6a05a90f962c41a6dcda34b560c3f, type: 3}
+  starTargetSize: 0.5
+  starEmissionIntensity: 2.2
   starFieldSeed: 777
-  decorativeStarCount: 40
-  decorativeStarMinSize: 2
-  decorativeStarMaxSize: 6
-  moonColor: {r: 0.95, g: 0.95, b: 0.85, a: 1}
+  decorativeStarCount: 16
+  decorativeStarTargetSize: 0.22
+  decorativeStarEmissionIntensity: 1.1
   shakeDuration: 0.5
   shakeMagnitude: 0.5
   starFallDuration: 1.1
