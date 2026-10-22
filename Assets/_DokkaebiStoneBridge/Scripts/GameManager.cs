@@ -27,6 +27,9 @@ namespace DokkaebiStoneBridge
         public Color clearColor = new Color(0.95f, 0.85f, 0.4f);
         public float detectFlashDuration = 0.3f;
 
+        [Tooltip("true면 바닥 밖으로 추락했을 때도 스테이지 시작 지점으로 리스폰. false면 예전처럼 마지막 안전 위치로 리스폰")]
+        public bool respawnAtStartOnFall = true;
+
         [Tooltip("true면 시작하자마자 바로 플레이 상태(타이틀/스테이지 선택 생략, 테스트용)")]
         public bool skipTitleForTesting = false;
 
@@ -289,7 +292,7 @@ namespace DokkaebiStoneBridge
             float dawnDelay = 2f;
             if (sky != null)
             {
-                dawnDelay = sky.transitionDuration;
+                dawnDelay = sky.GetDawnDuration();
                 sky.TriggerDawn();
             }
             else

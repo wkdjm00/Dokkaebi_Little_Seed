@@ -12,6 +12,9 @@ namespace DokkaebiStoneBridge
         public float moveSpeed = 3.4f;
         public float turnSpeed = 12f;
 
+        // 장승(RideableTotem)에 올라탄 동안 true. 이때는 플레이어가 직접 이동하지 않고 장승이 대신 움직인다.
+        public bool InputSuspended { get; set; }
+
         private Rigidbody _rb;
         private Vector3 _lastMoveDir = Vector3.forward;
 
@@ -23,6 +26,8 @@ namespace DokkaebiStoneBridge
 
         private void FixedUpdate()
         {
+            if (InputSuspended) return;
+
             bool locked = GameManager.Instance != null &&
                           (GameManager.Instance.IsGameOver || GameManager.Instance.Cleared);
 

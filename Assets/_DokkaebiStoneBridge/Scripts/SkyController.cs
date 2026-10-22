@@ -33,6 +33,12 @@ public class SkyController : MonoBehaviour
     public float starEmissionIntensity = 2.2f;
     public int starFieldSeed = 777;
 
+    [Header("별 배치 방식")]
+    [Tooltip("켜면 NightSkyGroup 안에 미리 배치해 둔 ProgressStar_N / DecoStar_N 오브젝트를 그대로 사용합니다(씬에서 직접 수정 가능). 하나도 없으면 예전처럼 플레이 시작 시 코드로 생성합니다.")]
+    public bool useScenePlacedStars = true;
+    [Tooltip("플레이 시작 시 별 머티리얼에 발광(Emission)을 강제로 켤지 여부. 끄면 모델에 적용된 Star.mat 그대로 사용합니다.")]
+    public bool forceStarEmission = false;
+
     [Header("배경 장식 별 (연출용)")]
     public int decorativeStarCount = 18;
     public float decorativeStarTargetSize = 0.22f;
@@ -43,6 +49,12 @@ public class SkyController : MonoBehaviour
     public float shakeMagnitude = 0.5f;
     public float starFallDuration = 1.2f;
 
+    [Header("마지막 스테이지 클리어: 가장 큰 별이 떨어진 뒤 남은 별도 전부 떨어짐")]
+    [Tooltip("남은 별들이 떨어지기 시작하는 시간이 이 범위 안에서 제각각 달라진다(초). 0이면 한꺼번에 떨어진다.")]
+    public float finalRestFallStagger = 0.6f;
+    [Tooltip("남은 별 하나가 떨어지는 데 걸리는 시간(초)")]
+    public float finalRestFallDuration = 1.0f;
+
     public bool enableTestKey = true;
 
     private Camera _cam;
@@ -50,6 +62,8 @@ public class SkyController : MonoBehaviour
     private bool _fullyDay;
     private bool _isAnimating;
     private float _currentBrightFrac;
+    private int _restFalling;
+    private bool _finalRestFallFinished = true;
 
     private readonly List<Transform> _progressStars = new List<Transform>();
     private readonly List<Vector3> _progressHomeLocalPos = new List<Vector3>();
@@ -73,16 +87,11 @@ public class SkyController : MonoBehaviour
 
     private void Update()
     {
-        if (enableTestKey && Input.GetKeyDown(KeyCode.T))
+        // 테스트용 T키 (새 Input System 방식). 별은 회전시키지 않는다.
+        var kb = UnityEngine.InputSystem.Keyboard.current;
+        if (enableTestKey && kb != null && kb.tKey.wasPressedThisFrame)
         {
             TriggerDawn();
-        }
-
-        for (int i = 0; i < _decoStars.Count; i++)
-        {
-            Transform t = _decoStars[i];
-            if (t == null) continue;
-            t.Rotate(Vector3.up, _decoSpinSpeed[i] * Time.deltaTime, Space.Self);
         }
     }
 
@@ -106,15 +115,18 @@ public class SkyController : MonoBehaviour
 
         if (nightSkyGroup != null)
         {
-            nightSkyGroup.SetParent(_cam.transform, false);
-            nightSkyGroup.localPosition = Vector3.zero;
-            nightSkyGroup.localRotation = Quaternion.identity;
+            // 에디터에서 이미 카메라의 자식으로 배치해 두었다면, 그 위치/회전(= 별과 카메라 사이 거리 등)을 그대로 유지한다.
+            bool nightAlreadyOnCamera = nightSkyGroup.parent == _cam.transform;
+            if (!nightAlreadyOnCamera) nightSkyGroup.SetParent(_cam.transform, false);
+            if (!nightAlreadyOnCamera) nightSkyGroup.localPosition = Vector3.zero;
+            if (!nightAlreadyOnCamera) nightSkyGroup.localRotation = Quaternion.identity;
         }
         if (daySkyGroup != null)
         {
-            daySkyGroup.SetParent(_cam.transform, false);
-            daySkyGroup.localPosition = Vector3.zero;
-            daySkyGroup.localRotation = Quaternion.identity;
+            bool dayAlreadyOnCamera = daySkyGroup.parent == _cam.transform;
+            if (!dayAlreadyOnCamera) daySkyGroup.SetParent(_cam.transform, false);
+            if (!dayAlreadyOnCamera) daySkyGroup.localPosition = Vector3.zero;
+            if (!dayAlreadyOnCamera) daySkyGroup.localRotation = Quaternion.identity;
         }
     }
 
@@ -125,6 +137,8 @@ public class SkyController : MonoBehaviour
             Debug.LogWarning("[SkyController] nightSkyGroup가 비어 있어 별을 배치할 수 없습니다.");
             return;
         }
+        if (useScenePlacedStars && CollectScenePlacedStars()) return;
+
         if (starPrefabs == null || starPrefabs.Length == 0)
         {
             Debug.LogWarning("[SkyController] starPrefabs가 비어 있어 별 모델을 배치할 수 없습니다.");
@@ -152,7 +166,7 @@ public class SkyController : MonoBehaviour
 
             float sizeJitter = 0.85f + (float)rng.NextDouble() * 0.3f;
             ScaleToTarget(inst.transform, starTargetSize * sizeJitter);
-            ApplyGlow(inst, starColor, starEmissionIntensity);
+            if (forceStarEmission) ApplyGlow(inst, starColor, starEmissionIntensity);
 
             _progressStars.Add(inst.transform);
             _progressHomeLocalPos.Add(inst.transform.localPosition);
@@ -178,11 +192,75 @@ public class SkyController : MonoBehaviour
 
             float sizeJitter = 0.6f + (float)rng.NextDouble() * 0.8f;
             ScaleToTarget(inst.transform, decorativeStarTargetSize * sizeJitter);
-            ApplyGlow(inst, decoColor, decorativeStarEmissionIntensity);
+            if (forceStarEmission) ApplyGlow(inst, decoColor, decorativeStarEmissionIntensity);
 
             _decoStars.Add(inst.transform);
             _decoSpinSpeed.Add(8f + (float)rng.NextDouble() * 20f);
         }
+    }
+
+    // 씬(NightSkyGroup)에 미리 배치해 둔 별을 수집한다.
+    //   ProgressStar_0, ProgressStar_1 ... : 스테이지 클리어 때 흔들리다 떨어지는 별 (번호 = 스테이지 번호 - 1)
+    //   DecoStar_N                         : 배경 장식 별 (플레이 중 천천히 회전)
+    // 위치/회전/크기/모델은 씬에서 자유롭게 수정해도 그대로 쓰인다. 이름의 번호만 유지하면 된다.
+    private bool CollectScenePlacedStars()
+    {
+        if (nightSkyGroup == null) return false;
+
+        int n = StageProgress.StageCount;
+        Transform[] slots = new Transform[n];
+        bool found = false;
+
+        foreach (Transform child in nightSkyGroup)
+        {
+            if (child.name.StartsWith("ProgressStar_"))
+            {
+                int idx = ParseTrailingIndex(child.name);
+                if (idx >= 0 && idx < n && slots[idx] == null)
+                {
+                    slots[idx] = child;
+                    found = true;
+                }
+            }
+            else if (child.name.StartsWith("DecoStar_"))
+            {
+                _decoStars.Add(child);
+                found = true;
+            }
+        }
+
+        if (!found)
+        {
+            _decoStars.Clear();
+            return false;
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            Transform t = slots[i];
+            _progressStars.Add(t);
+            _progressHomeLocalPos.Add(t != null ? t.localPosition : Vector3.zero);
+            _progressHomeLocalScale.Add(t != null ? t.localScale : Vector3.one);
+        }
+
+        System.Random rng = new System.Random(starFieldSeed + 1);
+        for (int i = 0; i < _decoStars.Count; i++)
+        {
+            _decoSpinSpeed.Add(8f + (float)rng.NextDouble() * 20f);
+        }
+
+        Debug.Log("[SkyController] 씬에 배치된 별 사용: 진행도 별 " + n + "칸, 장식 별 " + _decoStars.Count + "개");
+        return true;
+    }
+
+    private static int ParseTrailingIndex(string name)
+    {
+        int end = name.Length;
+        int start = end;
+        while (start > 0 && char.IsDigit(name[start - 1])) start--;
+        if (start == end) return -1;
+        int v;
+        return int.TryParse(name.Substring(start), out v) ? v : -1;
     }
 
     private static void ScaleToTarget(Transform t, float targetSize)
@@ -299,6 +377,33 @@ public class SkyController : MonoBehaviour
         StartCoroutine(ClearCelebrationRoutine());
     }
 
+    // 이번 클리어 연출이 모두 끝날 때까지 걸리는 시간. GameManager가 다음 화면으로 넘어가기 전에 기다리는 데 쓴다.
+    // 마지막 스테이지는 가장 큰 별이 떨어진 뒤 남은 별까지 전부 떨어져야 하므로 더 길다.
+    public float GetDawnDuration()
+    {
+        bool isFinal = CountClearedStages() >= StageProgress.StageCount;
+        if (!isFinal) return transitionDuration;
+
+        float restStart = Mathf.Min(starFallDuration, transitionDuration) + 0.1f;
+        float restEnd = restStart + Mathf.Max(0f, finalRestFallStagger) + Mathf.Max(0.1f, finalRestFallDuration);
+        return Mathf.Max(transitionDuration, restEnd) + 0.4f;
+    }
+
+    // 인스펙터 컴포넌트 메뉴(점 3개)에서 플레이 중에 실행해 마지막 스테이지 클리어 연출을 바로 볼 수 있다.
+    [ContextMenu("테스트/마지막 스테이지 클리어 연출 재생 (플레이 중에만)")]
+    public void TestFinalClearSequence()
+    {
+        if (!Application.isPlaying)
+        {
+            Debug.LogWarning("[SkyController] 플레이 중에만 실행할 수 있습니다.");
+            return;
+        }
+        for (int i = 1; i <= StageProgress.StageCount; i++) StageProgress.MarkCleared(i);
+        TriggerDawn();
+        // 연출 코루틴은 시작하는 순간 클리어 수를 이미 읽었으므로, 테스트용으로 넣은 클리어 기록은 바로 지운다.
+        StageProgress.ResetAll();
+    }
+
     private IEnumerator ClearCelebrationRoutine()
     {
         _isAnimating = true;
@@ -314,11 +419,18 @@ public class SkyController : MonoBehaviour
             StartCoroutine(ShakeCamera(rig, Mathf.Min(shakeDuration, transitionDuration), shakeMagnitude));
         }
 
-        StartCoroutine(DropStar3D(fallIndex, Mathf.Min(starFallDuration, transitionDuration)));
+        float bigStarFall = Mathf.Min(starFallDuration, transitionDuration);
+        StartCoroutine(DropStar3D(fallIndex, bigStarFall));
+
+        // 마지막 스테이지: 가장 큰 별이 떨어진 뒤, 남아 있는 별(장식 별 등)도 전부 떨어뜨린다.
+        _finalRestFallFinished = !isFinal;
+        if (isFinal)
+        {
+            StartCoroutine(FinalRestFallRoutine(bigStarFall + 0.1f, fallIndex));
+        }
 
         float from = _currentBrightFrac;
         float t = 0f;
-        bool nightHidden = false;
         while (t < transitionDuration)
         {
             t += Time.deltaTime;
@@ -326,11 +438,6 @@ public class SkyController : MonoBehaviour
             float eased = p * p * (3f - 2f * p);
             ApplySkyColors(Mathf.Lerp(from, targetFraction, eased));
 
-            if (isFinal && !nightHidden && p > 0.6f && nightSkyGroup != null)
-            {
-                nightSkyGroup.gameObject.SetActive(false);
-                nightHidden = true;
-            }
             if (isFinal && daySkyGroup != null && !daySkyGroup.gameObject.activeSelf)
             {
                 daySkyGroup.gameObject.SetActive(true);
@@ -341,10 +448,13 @@ public class SkyController : MonoBehaviour
 
         if (isFinal)
         {
+            // 남은 별이 전부 떨어질 때까지 기다린 뒤에 밤 하늘 그룹을 끈다.
+            while (!_finalRestFallFinished) yield return null;
+
             if (nightSkyGroup != null) nightSkyGroup.gameObject.SetActive(false);
             _isDay = true;
             _fullyDay = true;
-            Debug.Log("[SkyController] 마지막 별까지 떨어지고 하늘이 완전히 밝아졌습니다.");
+            Debug.Log("[SkyController] 마지막 별에 이어 남은 별도 모두 떨어지고 하늘이 완전히 밝아졌습니다.");
         }
         else
         {
@@ -352,6 +462,88 @@ public class SkyController : MonoBehaviour
         }
 
         _isAnimating = false;
+    }
+
+    // 큰 별이 떨어진 뒤 호출: 아직 보이는 별을 모두 모아서 제각각의 시간차로 떨어뜨린다.
+    private IEnumerator FinalRestFallRoutine(float waitBeforeStart, int skipProgressIndex)
+    {
+        float w = 0f;
+        while (w < waitBeforeStart)
+        {
+            w += Time.deltaTime;
+            yield return null;
+        }
+
+        var remaining = new List<Transform>();
+        for (int i = 0; i < _progressStars.Count; i++)
+        {
+            if (i == skipProgressIndex) continue; // 방금 떨어진 큰 별은 제외
+            if (_progressStars[i] != null && _progressStars[i].gameObject.activeSelf) remaining.Add(_progressStars[i]);
+        }
+        for (int i = 0; i < _decoStars.Count; i++)
+        {
+            if (_decoStars[i] != null && _decoStars[i].gameObject.activeSelf) remaining.Add(_decoStars[i]);
+        }
+
+        System.Random rng = new System.Random(4242);
+        _restFalling = remaining.Count;
+        for (int i = 0; i < remaining.Count; i++)
+        {
+            float delay = (float)rng.NextDouble() * Mathf.Max(0f, finalRestFallStagger);
+            StartCoroutine(DropRestStar(remaining[i], delay, Mathf.Max(0.1f, finalRestFallDuration), 1000 + i));
+        }
+
+        while (_restFalling > 0) yield return null;
+        _finalRestFallFinished = true;
+    }
+
+    // 남은 별 하나: 잠깐 흔들린 뒤 아래로 떨어지며 작아져 사라진다 (큰 별 연출과 같은 모양, 더 짧게).
+    private IEnumerator DropRestStar(Transform star, float delay, float duration, int seed)
+    {
+        float wt = 0f;
+        while (wt < delay)
+        {
+            wt += Time.deltaTime;
+            yield return null;
+        }
+
+        if (star != null && star.gameObject.activeSelf)
+        {
+            Vector3 startPos = star.localPosition;
+            Vector3 startScale = star.localScale;
+            System.Random rng = new System.Random(seed);
+
+            float jitterDuration = Mathf.Min(0.25f, duration * 0.3f);
+            float jt = 0f;
+            while (jt < jitterDuration)
+            {
+                jt += Time.deltaTime;
+                float shake = 0.05f * (1f - jt / jitterDuration);
+                float ox = ((float)rng.NextDouble() * 2f - 1f) * shake;
+                float oy = ((float)rng.NextDouble() * 2f - 1f) * shake;
+                star.localPosition = startPos + new Vector3(ox, oy, 0f);
+                yield return null;
+            }
+            star.localPosition = startPos;
+
+            Vector3 endPos = startPos + new Vector3(0f, -5.5f, 0f);
+            float fallDuration = Mathf.Max(0.05f, duration - jitterDuration);
+            float ft = 0f;
+            while (ft < fallDuration)
+            {
+                ft += Time.deltaTime;
+                float p = Mathf.Clamp01(ft / fallDuration);
+                star.localPosition = Vector3.Lerp(startPos, endPos, p * p);
+                star.localScale = Vector3.Lerp(startScale, Vector3.zero, p);
+                yield return null;
+            }
+
+            star.gameObject.SetActive(false);
+            star.localPosition = startPos;
+            star.localScale = startScale;
+        }
+
+        _restFalling--;
     }
 
     private IEnumerator ShakeCamera(IsoCameraRig rig, float duration, float magnitude)

@@ -38,6 +38,37 @@ namespace DokkaebiStoneBridge
             return false;
         }
 
+        // 클리어 기록 초기화 규칙
+        //  - 에디터: Unity를 끄면 초기화 (다음에 Unity를 열 때 한 번). Play를 껐다 켜는 것만으로는 초기화되지 않는다.
+        //  - 빌드  : 게임을 완전히 끄고 다시 실행하면 초기화.
+        //  - 스테이지 재시작/선택으로 씬을 다시 불러올 때는 항상 유지된다.
+        // (볼륨 같은 설정값은 건드리지 않는다.)
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void ResetOnAppLaunch()
+        {
+#if !UNITY_EDITOR
+            ResetForNewRun();
+#endif
+        }
+
+#if UNITY_EDITOR
+        // 에디터 세션당 한 번만 실행된다. (SessionState는 Unity를 끄면 사라지고, Play/스크립트 재컴파일로는 유지된다.)
+        [UnityEditor.InitializeOnLoadMethod]
+        private static void ResetOnEditorSessionStart()
+        {
+            if (UnityEditor.SessionState.GetBool("DSB_ProgressResetDone", false)) return;
+            UnityEditor.SessionState.SetBool("DSB_ProgressResetDone", true);
+            ResetForNewRun();
+        }
+#endif
+
+        private static void ResetForNewRun()
+        {
+            ResetAll();
+            PlayerPrefs.DeleteKey("DSB_PendingStage");
+            PlayerPrefs.Save();
+        }
+
         public static void ResetAll()
         {
             for (int i = 1; i <= StageCount; i++)

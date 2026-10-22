@@ -22,6 +22,7 @@ namespace DokkaebiStoneBridge
         private Transform _visual;
         private Material _mat;
         private float _t;
+        private static readonly RaycastHit[] _hitBuf = new RaycastHit[32];
 
         private void Awake()
         {
@@ -44,6 +45,15 @@ namespace DokkaebiStoneBridge
             _mat = BuildUnlitTransparentMaterial(zoneColor);
             renderer.material = _mat;
             renderer.sortingOrder = 100;
+
+            // 위치가 잡히기 전(월드 원점)에 화면에 보이지 않도록 숨겨 둔다. 첫 Update에서 위치를 잡은 뒤 켠다.
+            go.SetActive(false);
+        }
+
+        // 스테이지가 꺼질 때(감시자 비활성)는 시야 원도 같이 숨긴다. 안 그러면 원점(0,0,0)에 원통이 멈춰 남는다.
+        private void OnDisable()
+        {
+            if (_visual != null) _visual.gameObject.SetActive(false);
         }
 
         private static Material BuildUnlitTransparentMaterial(Color color)
@@ -80,6 +90,36 @@ namespace DokkaebiStoneBridge
             return mat;
         }
 
+        // 감시자 자신/플레이어/밀 수 있는 물체/시야 차단 벽 위에 원이 얹히면 공중에 떠 보이므로 진짜 바닥만 대상으로 한다.
+        private bool TryFindGround(Vector3 center, out RaycastHit best)
+        {
+            best = default(RaycastHit);
+            int n = Physics.RaycastNonAlloc(center + Vector3.up * 5f, Vector3.down, _hitBuf, 30f, groundMask, QueryTriggerInteraction.Ignore);
+            bool found = false;
+            float bestDist = float.MaxValue;
+            for (int i = 0; i < n; i++)
+            {
+                Collider col = _hitBuf[i].collider;
+                if (col == null || IsNotGround(col)) continue;
+                if (_hitBuf[i].distance < bestDist)
+                {
+                    bestDist = _hitBuf[i].distance;
+                    best = _hitBuf[i];
+                    found = true;
+                }
+            }
+            return found;
+        }
+
+        private static bool IsNotGround(Collider col)
+        {
+            if (col.GetComponentInParent<PlayerMover>() != null) return true;
+            if (col.GetComponentInParent<WatcherVision>() != null) return true;
+            if (col.GetComponentInParent<VisionBlocker>() != null) return true;
+            if (col.attachedRigidbody != null && !col.attachedRigidbody.isKinematic) return true;
+            return false;
+        }
+
         private void Update()
         {
             if (_vision == null || _visual == null) return;
@@ -87,13 +127,14 @@ namespace DokkaebiStoneBridge
             Vector3 center = _vision.GetZoneCenter();
 
             float groundY = center.y;
-            if (Physics.Raycast(center + Vector3.up * 5f, Vector3.down, out RaycastHit hit, 30f, groundMask, QueryTriggerInteraction.Ignore))
+            if (TryFindGround(center, out RaycastHit hit))
             {
                 groundY = hit.point.y;
             }
 
             _visual.position = new Vector3(center.x, groundY + groundOffset, center.z);
             _visual.rotation = Quaternion.identity;
+            if (!_visual.gameObject.activeSelf) _visual.gameObject.SetActive(true);
 
             float diameter = _vision.zoneRadius * 2f;
             _visual.localScale = new Vector3(diameter, 0.02f, diameter);

@@ -28,7 +28,13 @@ namespace DokkaebiStoneBridge
 
         public void RespawnToLastSafe()
         {
-            Vector3 target = GameManager.Instance != null ? GameManager.Instance.LastSafePosition : transform.position;
+            Vector3 target = transform.position;
+            if (GameManager.Instance != null)
+            {
+                target = GameManager.Instance.respawnAtStartOnFall
+                    ? GameManager.Instance.StartPosition
+                    : GameManager.Instance.LastSafePosition;
+            }
             RespawnTo(target);
         }
 

@@ -17,6 +17,18 @@ namespace DokkaebiStoneBridge
         public bool patrol;
         public float patrolDistance = 2f;
         public float patrolSpeed = 1f;
+
+        [Header("칸 단위 순찰 경로 (바닥 블럭 1칸 = cellSize)")]
+        [Tooltip("순서대로 이동할 칸 수. x=동(+X) 칸, y=북(+Z) 칸. 시작 위치 기준 상대값. 비워두면 위의 patrol(좌우 왕복) 방식을 그대로 사용. 예) (3,0) = 동쪽으로 3칸 갔다가 처음 자리로 되돌아옴")]
+        public Vector2Int[] patrolSteps;
+        [Tooltip("체크: 마지막 지점에서 시작점으로 곧장 돌아와 반복(네모 같은 순환 경로). 해제: 왔던 길을 그대로 되돌아가는 왕복")]
+        public bool patrolLoop;
+        [Tooltip("바닥 블럭 한 칸의 크기(월드 단위)")]
+        public float cellSize = 1f;
+        [Tooltip("순찰 이동 속도(월드 단위/초)")]
+        public float patrolMoveSpeed = 1.5f;
+        [Tooltip("지점에 도착했을 때 잠깐 멈추는 시간(초)")]
+        public float patrolPauseTime = 0.3f;
         public bool IsChasing { get; private set; }
         public bool IsInGrace => Time.time < _graceUntil;
         public void GrantGrace(float duration)
@@ -29,6 +41,10 @@ namespace DokkaebiStoneBridge
         private Quaternion _homeRotation;
         private Vector3 _homePatrolStart;
         private Vector3 _homePatrolAxis;
+        private Vector3[] _pathPoints;
+        private int _pathIndex;
+        private int _pathDir = 1;
+        private float _pathWaitUntil;
         private Transform _player;
         private Rigidbody _rb;
         private MonsterFallRespawn _fallRespawn;
@@ -48,6 +64,7 @@ namespace DokkaebiStoneBridge
             _homeRotation = transform.rotation;
             _homePatrolStart = _patrolStart;
             _homePatrolAxis = _patrolAxis;
+            BuildPatrolPath();
         }
         private void Start()
         {
@@ -69,6 +86,7 @@ namespace DokkaebiStoneBridge
                 _rb.linearVelocity = Vector3.zero;
                 _rb.angularVelocity = Vector3.zero;
             }
+            ResetPatrolPath();
             GrantGrace(startGraceDuration);
         }
         private void FixedUpdate()
@@ -90,6 +108,10 @@ namespace DokkaebiStoneBridge
                     _lastMoveDir = dir;
                     FaceDirection(dir);
                 }
+            }
+            else if (HasPathPatrol)
+            {
+                UpdatePathPatrol();
             }
             else if (patrol)
             {
@@ -114,6 +136,137 @@ namespace DokkaebiStoneBridge
                 _rb.linearVelocity = new Vector3(0f, stay.y, 0f);
             }
         }
+        private bool HasPathPatrol { get { return patrolSteps != null && patrolSteps.Length > 0; } }
+
+        // 시작 위치 + 칸 단위 이동 목록 -> 월드 좌표 지점 목록 (씬 뷰 기즈모에서도 사용)
+        private Vector3[] BuildPathPoints(Vector3 origin)
+        {
+            var pts = new Vector3[patrolSteps.Length + 1];
+            pts[0] = origin;
+            Vector3 p = origin;
+            for (int i = 0; i < patrolSteps.Length; i++)
+            {
+                p += new Vector3(patrolSteps[i].x, 0f, patrolSteps[i].y) * cellSize;
+                pts[i + 1] = p;
+            }
+            return pts;
+        }
+
+        private void BuildPatrolPath()
+        {
+            _pathPoints = HasPathPatrol ? BuildPathPoints(transform.position) : null;
+            ResetPatrolPath();
+        }
+
+        private void ResetPatrolPath()
+        {
+            _pathIndex = 0;
+            _pathDir = 1;
+            _pathWaitUntil = 0f;
+        }
+
+        private void UpdatePathPatrol()
+        {
+            Vector3 vel = _rb.linearVelocity;
+            if (_pathPoints == null || _pathPoints.Length < 2 || Time.time < _pathWaitUntil)
+            {
+                _rb.linearVelocity = new Vector3(0f, vel.y, 0f);
+                return;
+            }
+
+            Vector3 to = _pathPoints[_pathIndex] - transform.position;
+            to.y = 0f;
+            float step = patrolMoveSpeed * Time.fixedDeltaTime;
+            if (to.magnitude <= Mathf.Max(0.05f, step))
+            {
+                // 지점 도착: 잠깐 멈췄다가 다음 지점으로
+                _pathWaitUntil = Time.time + patrolPauseTime;
+                AdvancePathIndex();
+                _rb.linearVelocity = new Vector3(0f, vel.y, 0f);
+                return;
+            }
+
+            Vector3 dir = to.normalized;
+            _rb.linearVelocity = new Vector3(dir.x * patrolMoveSpeed, vel.y, dir.z * patrolMoveSpeed);
+            _lastMoveDir = dir;
+            FaceDirection(dir);
+        }
+
+        private void AdvancePathIndex()
+        {
+            if (patrolLoop)
+            {
+                // 마지막 지점 다음엔 시작점으로 곧장 이동 (순환)
+                _pathIndex = (_pathIndex + 1) % _pathPoints.Length;
+            }
+            else
+            {
+                // 끝에 닿으면 왔던 길을 되돌아감 (왕복)
+                int next = _pathIndex + _pathDir;
+                if (next >= _pathPoints.Length || next < 0)
+                {
+                    _pathDir = -_pathDir;
+                    next = _pathIndex + _pathDir;
+                }
+                _pathIndex = next;
+            }
+        }
+
+        // 추격하다 놓친 뒤에는 가장 가까운 경로 지점으로 돌아가서 순찰을 이어간다.
+        private void SnapToNearestPathPoint()
+        {
+            if (_pathPoints == null) return;
+            float best = float.MaxValue;
+            int bestIndex = _pathIndex;
+            for (int i = 0; i < _pathPoints.Length; i++)
+            {
+                float dx = _pathPoints[i].x - transform.position.x;
+                float dz = _pathPoints[i].z - transform.position.z;
+                float d = dx * dx + dz * dz;
+                if (d < best) { best = d; bestIndex = i; }
+            }
+            _pathIndex = bestIndex;
+            _pathWaitUntil = 0f;
+        }
+
+#if UNITY_EDITOR
+        // 컴포넌트 우클릭(⋮) 메뉴에서 예시 패턴을 바로 채울 수 있다. 이후 patrolSteps 숫자를 직접 고치면 된다.
+        [ContextMenu("순찰 패턴 예시/직선 왕복 3칸")]
+        private void PresetLine3() { ApplyPreset(new[] { new Vector2Int(3, 0) }, false); }
+
+        [ContextMenu("순찰 패턴 예시/네모 3x3 (순환)")]
+        private void PresetSquare3() { ApplyPreset(new[] { new Vector2Int(3, 0), new Vector2Int(0, 3), new Vector2Int(-3, 0), new Vector2Int(0, -3) }, true); }
+
+        [ContextMenu("순찰 패턴 예시/ㄱ자 왕복 (3칸 + 3칸)")]
+        private void PresetGiyeok() { ApplyPreset(new[] { new Vector2Int(3, 0), new Vector2Int(0, -3) }, false); }
+
+        [ContextMenu("순찰 패턴 예시/ㄴ자 왕복 (3칸 + 3칸)")]
+        private void PresetNieun() { ApplyPreset(new[] { new Vector2Int(0, 3), new Vector2Int(3, 0) }, false); }
+
+        private void ApplyPreset(Vector2Int[] steps, bool loop)
+        {
+            UnityEditor.Undo.RecordObject(this, "순찰 패턴 예시 적용");
+            patrolSteps = steps;
+            patrolLoop = loop;
+            UnityEditor.EditorUtility.SetDirty(this);
+        }
+
+        // 선택했을 때 씬 뷰에 순찰 경로(칸 단위)를 그려서 보면서 수정할 수 있다.
+        private void OnDrawGizmosSelected()
+        {
+            if (!HasPathPatrol) return;
+            Vector3 origin = (Application.isPlaying && _pathPoints != null) ? _pathPoints[0] : transform.position;
+            Vector3[] pts = BuildPathPoints(origin);
+            Gizmos.color = new Color(0.2f, 0.9f, 1f, 0.95f);
+            for (int i = 0; i < pts.Length; i++)
+            {
+                Gizmos.DrawSphere(pts[i] + Vector3.up * 0.05f, i == 0 ? 0.14f : 0.1f);
+                if (i > 0) Gizmos.DrawLine(pts[i - 1] + Vector3.up * 0.05f, pts[i] + Vector3.up * 0.05f);
+            }
+            if (patrolLoop && pts.Length > 1) Gizmos.DrawLine(pts[pts.Length - 1] + Vector3.up * 0.05f, pts[0] + Vector3.up * 0.05f);
+        }
+#endif
+
         private void FaceDirection(Vector3 dir)
         {
             if (dir.sqrMagnitude < 0.0001f) return;
@@ -156,6 +309,7 @@ namespace DokkaebiStoneBridge
                     _loseInterestAt = -1f;
                     _patrolStart = transform.position;
                     _patrolAxis = transform.right;
+                    SnapToNearestPathPoint();
                 }
             }
         }

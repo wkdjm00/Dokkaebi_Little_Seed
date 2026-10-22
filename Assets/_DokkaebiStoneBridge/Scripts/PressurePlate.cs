@@ -10,6 +10,42 @@ namespace DokkaebiStoneBridge
 
         private int _weightCount;
 
+        [Header("눌림 표현")]
+        [Tooltip("눌릴 때 아래로 내려갈 모델. 비워두면 'Visual' 자식 -> 첫 번째 자식 순으로 자동 선택")]
+        public Transform visual;
+        [Tooltip("눌렸을 때 내려가는 깊이(월드 단위)")]
+        public float pressDepth = 0.08f;
+        [Tooltip("내려가고 올라오는 속도 (클수록 빠름)")]
+        public float pressSpeed = 14f;
+
+        private Vector3 _visualRestLocalPos;
+        private float _pressAmount;
+
+        private void Awake()
+        {
+            if (visual == null)
+            {
+                visual = transform.Find("Visual");
+                if (visual == null && transform.childCount > 0) visual = transform.GetChild(0);
+            }
+            if (visual != null) _visualRestLocalPos = visual.localPosition;
+        }
+
+        private void Update()
+        {
+            if (visual == null) return;
+            float target = IsPressed ? 1f : 0f;
+            _pressAmount = Mathf.Lerp(_pressAmount, target, 1f - Mathf.Exp(-pressSpeed * Time.unscaledDeltaTime));
+            if (Mathf.Abs(_pressAmount - target) < 0.001f) _pressAmount = target;
+            visual.localPosition = _visualRestLocalPos + Vector3.down * (pressDepth * _pressAmount);
+        }
+
+        private void OnDisable()
+        {
+            _pressAmount = 0f;
+            if (visual != null) visual.localPosition = _visualRestLocalPos;
+        }
+
         private void Reset()
         {
             var col = GetComponent<Collider>();
@@ -32,7 +68,8 @@ namespace DokkaebiStoneBridge
         {
             return other.CompareTag("Player")
                 || other.GetComponentInParent<PushableBlock>() != null
-                || other.GetComponentInParent<PushableTotem>() != null;
+                || other.GetComponentInParent<PushableTotem>() != null
+                || other.GetComponentInParent<RideableTotem>() != null;
         }
     }
 }

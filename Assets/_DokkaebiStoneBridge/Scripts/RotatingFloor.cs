@@ -33,6 +33,10 @@ namespace DokkaebiStoneBridge
         [Tooltip("E+클릭으로 뒤집기(0/-90/-180 왕복)가 가능한지")]
         public bool allowFlip = false;
 
+        [Header("에디터 표시 (맵 제작용 - 완성 후 끄기)")]
+        [Tooltip("체크하면 씬 뷰에 회전 축과 돌아가는 방향을 그려준다. 플레이/빌드에는 영향 없음. 상단 메뉴 Tools > MapKit 에서 한 번에 끌 수 있다.")]
+        public bool showEditorGuide = false;
+
         private bool _rotating;
 
         // 뒤집기 상태: 0, -1, -2 가 각각 0도, -90도, -180도를 의미.
@@ -40,6 +44,62 @@ namespace DokkaebiStoneBridge
         private int _flipDir = -1; // 현재 진행 방향 (-1: 음수 쪽으로, +1: 0도 쪽으로 복귀)
         private Vector3 _flipAxis;
         private bool _flipAxisCaptured;
+
+        #if UNITY_EDITOR
+        private void OnDrawGizmos()
+        {
+            if (!showEditorGuide || Application.isPlaying) return;
+            Vector3 pivot = transform.position;
+
+            if (allowPlainRotate)
+            {
+                Color c = new Color(1f, 0.85f, 0.15f, 1f);
+                DrawGuideAxis(pivot, Vector3.up, c);
+                DrawGuideArc(pivot, Vector3.up, Vector3.forward, rotateStepDegrees, 1.1f, c);
+                UnityEditor.Handles.Label(pivot + Vector3.up * 1.9f, "Y축 회전(클릭) " + rotateStepDegrees + "도");
+            }
+
+            if (allowFlip)
+            {
+                Color f = new Color(0.2f, 0.9f, 1f, 1f);
+                Vector3 axis = transform.right;
+                // 접힌(처음) 상태에서 바닥이 매달려 있는 쪽(-up)에서 출발해 -90도, -180도 순서로 도는 방향을 보여준다.
+                Vector3 radial = -transform.up;
+                DrawGuideAxis(pivot, axis, f);
+                DrawGuideArc(pivot, axis, radial, -flipStepDegrees * 2f, 1.3f, f);
+                UnityEditor.Handles.Label(pivot + axis * 1.5f, "뒤집기 축(E+클릭) 0 > -90 > -180 왕복");
+            }
+        }
+
+        private static void DrawGuideAxis(Vector3 p, Vector3 dir, Color c)
+        {
+            Gizmos.color = c;
+            Gizmos.DrawLine(p - dir * 1.6f, p + dir * 1.6f);
+            Gizmos.DrawSphere(p, 0.07f);
+        }
+
+        private static void DrawGuideArc(Vector3 center, Vector3 axis, Vector3 startRadial, float degrees, float radius, Color c)
+        {
+            Gizmos.color = c;
+            const int seg = 24;
+            Vector3 prev = center + startRadial * radius;
+            Vector3 beforeLast = prev;
+            Vector3 last = prev;
+            for (int i = 1; i <= seg; i++)
+            {
+                Vector3 p = center + Quaternion.AngleAxis(degrees * i / seg, axis) * startRadial * radius;
+                Gizmos.DrawLine(prev, p);
+                beforeLast = prev;
+                prev = p;
+                last = p;
+            }
+            // 화살촉 (실제 회전 계산을 그대로 쓰므로 돌아가는 방향이 정확히 표시된다)
+            Vector3 tangent = (last - beforeLast).normalized;
+            Vector3 radialDir = (last - center).normalized;
+            Gizmos.DrawLine(last, last - tangent * 0.25f + radialDir * 0.12f);
+            Gizmos.DrawLine(last, last - tangent * 0.25f - radialDir * 0.12f);
+        }
+#endif
 
         private void Awake()
         {
